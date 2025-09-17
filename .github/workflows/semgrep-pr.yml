@@ -10,7 +10,8 @@ permissions:
   pull-requests: write
 
 env:
-  SEMGREP_SEND_METRICS: "false"
+  # must be one of: on | off | auto
+  SEMGREP_SEND_METRICS: "off"
 
 jobs:
   semgrep:
@@ -56,15 +57,18 @@ jobs:
           echo "new_findings_count=$count" >> "$GITHUB_OUTPUT"
 
       - name: Run Semgrep (SARIF for Code Scanning)
+        id: semgrep_sarif
         run: |
           set -euo pipefail
           semgrep scan \
             --config p/ci \
             --baseline-commit "${{ steps.baseline.outputs.base_sha }}" \
             --sarif --output semgrep.sarif || true
+          # ensure file exists if semgrep produced it
+          if [ -f semgrep.sarif ]; then echo "sarif_generated=true" >> "$GITHUB_OUTPUT"; else echo "sarif_generated=false" >> "$GITHUB_OUTPUT"; fi
 
       - name: Upload SARIF to GitHub Code Scanning
-        if: always()
+        if: ${{ always() && steps.semgrep_sarif.outputs.sarif_generated == 'true' }}
         uses: github/codeql-action/upload-sarif@f079b8493333aace61c81488f8bd40919487bd9f # v3.27.10
         with:
           sarif_file: semgrep.sarif
