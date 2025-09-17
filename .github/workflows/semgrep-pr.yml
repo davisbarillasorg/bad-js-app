@@ -1,0 +1,98 @@
+name: Semgrep PR Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  security-events: write
+  pull-requests: write
+
+env:
+  SEMGREP_SEND_METRICS: "false"
+
+jobs:
+  semgrep:
+    name: Scan for new findings
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout (full history for baseline)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Ensure jq and pipx are available
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y jq pipx
+          pipx --version
+
+      - name: Determine baseline (base commit of the PR)
+        id: baseline
+        run: |
+          echo "base_sha=${{ github.event.pull_request.base.sha }}" >> "$GITHUB_OUTPUT"
+          echo "base_ref=${{ github.event.pull_request.base.ref }}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Semgrep (pinned)
+        run: |
+          set -euo pipefail
+          pipx install "semgrep==1.93.0"
+          semgrep --version
+
+      - name: Run Semgrep (JSON)
+        id: semgrep_json
+        run: |
+          set -euo pipefail
+          semgrep scan \
+            --config p/ci \
+            --baseline-commit "${{ steps.baseline.outputs.base_sha }}" \
+            --json --output semgrep.json || true
+
+          test -s semgrep.json
+          count=$(jq '.results | length' semgrep.json)
+          echo "new_findings_count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: Run Semgrep (SARIF for Code Scanning)
+        run: |
+          set -euo pipefail
+          semgrep scan \
+            --config p/ci \
+            --baseline-commit "${{ steps.baseline.outputs.base_sha }}" \
+            --sarif --output semgrep.sarif || true
+
+      - name: Upload SARIF to GitHub Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@f079b8493333aace61c81488f8bd40919487bd9f # v3.27.10
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep
+
+      - name: Create or update PR comment
+        if: ${{ steps.semgrep_json.outputs.new_findings_count != '0' }}
+        uses: peter-evans/create-or-update-comment@56b3e372c9c845ddf3e3bb9274a1a5b4e2bcae5e # v4.0.2
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body: |
+            ⚠️ **Semgrep found ${{ steps.semgrep_json.outputs.new_findings_count }} new issue(s)** introduced by this PR compared to **${{ steps.baseline.outputs.base_ref }}**.
+
+            View details:
+            - Security → Code scanning alerts (SARIF)
+            - Workflow artifact: `semgrep.json`
+
+            > PR is blocked until these findings are resolved.
+
+      - name: Fail if new findings
+        if: ${{ steps.semgrep_json.outputs.new_findings_count != '0' }}
+        run: |
+          echo "Blocking PR: ${{ steps.semgrep_json.outputs.new_findings_count }} new finding(s) detected."
+          exit 1
+
+      - name: Upload JSON artifact
+        if: always()
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: semgrep-json
+          path: semgrep.json
