@@ -28,7 +28,7 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y jq pipx
+          sudo apt-get install -y jq pipx python3-venv
           pipx --version
 
       - name: Determine baseline (base commit of the PR)
@@ -48,24 +48,29 @@ jobs:
         run: |
           set -euo pipefail
           semgrep scan \
-            --config p/ci \
+            --config p/ci --config p/secrets --config p/javascript \
             --baseline-commit "${{ steps.baseline.outputs.base_sha }}" \
             --json --output semgrep.json || true
 
           test -s semgrep.json
           count=$(jq '.results | length' semgrep.json)
           echo "new_findings_count=$count" >> "$GITHUB_OUTPUT"
+          echo "DEBUG new_findings_count=$count"
 
       - name: Run Semgrep (SARIF for Code Scanning)
         id: semgrep_sarif
         run: |
           set -euo pipefail
           semgrep scan \
-            --config p/ci \
+            --config p/ci --config p/secrets --config p/javascript \
             --baseline-commit "${{ steps.baseline.outputs.base_sha }}" \
             --sarif --output semgrep.sarif || true
-          # ensure file exists if semgrep produced it
-          if [ -f semgrep.sarif ]; then echo "sarif_generated=true" >> "$GITHUB_OUTPUT"; else echo "sarif_generated=false" >> "$GITHUB_OUTPUT"; fi
+
+          if [ -f semgrep.sarif ]; then
+            echo "sarif_generated=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "sarif_generated=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Upload SARIF to GitHub Code Scanning
         if: ${{ always() && steps.semgrep_sarif.outputs.sarif_generated == 'true' }}
