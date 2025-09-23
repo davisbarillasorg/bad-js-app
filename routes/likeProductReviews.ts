@@ -6,7 +6,6 @@
 import challengeUtils = require('../lib/challengeUtils')
 import { Request, Response, NextFunction } from 'express'
 import { Review } from '../data/types'
-import { Types } from 'mongoose';
 
 const challenges = require('../data/datacache').challenges
 const db = require('../data/mongodb')
@@ -14,13 +13,8 @@ const security = require('../lib/insecurity')
 
 module.exports = function productReviews () {
   return (req: Request, res: Response, next: NextFunction) => {
-    const rawId = req.body.id;
-    if (!Types.ObjectId.isValid(rawId)) {
-      return res.status(400).json({ error: 'Invalid ID' });
-    }
-    const id = new Types.ObjectId(rawId);
-
-    db.reviews.findOne({ _id: id }).then((review: Review) => {
+    const id = req.body.id
+    const user = security.authenticatedUsers.from(req)
     db.reviews.findOne({ _id: id }).then((review: Review) => {
       if (!review) {
         res.status(404).json({ error: 'Not found' })
